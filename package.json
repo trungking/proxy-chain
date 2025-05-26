@@ -1,0 +1,14 @@
+{
+  "name": "http-to-socks-proxy",
+  "version": "1.0.0",
+  "description": "HTTP to SOCKS5 proxy using proxy-chain",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "proxy-chain": "^2.0.0" 
+  },
+  "author": "",
+  "license": "ISC"
+} 
