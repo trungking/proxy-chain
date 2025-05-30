@@ -2,6 +2,11 @@
 
 🤖 **Powered by AI** | Built with [Cursor](https://cursor.sh/) - *The future of coding is here!*
 
+## Languages / Ngôn ngữ
+
+- [English](README.md) (Current)
+- [Tiếng Việt](README-vi.md) (Vietnamese)
+
 A powerful proxy management solution that bridges HTTP and SOCKS5 protocols, featuring a Chrome extension for seamless configuration and control.
 
 ![Proxy Chain](chrome-extension/images/icon128.png)
