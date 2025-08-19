@@ -757,30 +757,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Get current bypass list
-    const currentBypassList = await getBypassList();
-    
-    // Create a "proxy only" list by adding all domains except the current one to the bypass list
-    // This is the inverse of what we normally do
-    const allBypassedDomains = [...currentBypassList];
-    
-    // Make sure the current domain is not in the bypass list (we want to proxy it)
-    const domainIndex = allBypassedDomains.findIndex(item => 
-      item === domain || item === '*.' + domain || domain.endsWith('.' + item.replace(/^\*\./, ''))
-    );
-    
-    if (domainIndex !== -1) {
-      allBypassedDomains.splice(domainIndex, 1);
-    }
-    
-    // Add a special "PROXY_ONLY:domain.com" marker to the bypass list 
-    // The background script will use this to identify sites that should only be proxied
-    allBypassedDomains.push(`PROXY_ONLY:${domain}`);
-    
-    // Save the modified bypass list
-    await saveBypassList(allBypassedDomains);
-    
-    // Connect via the proxy with the "proxy only" bypass list
+    // Connect via the proxy with site-specific configuration
+    // The background script will handle setting up PAC script for site-specific proxy
     chrome.runtime.sendMessage({ 
       action: "connectProxy", 
       data: { 
