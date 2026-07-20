@@ -1,24 +1,27 @@
 /**
- * Storage utility functions for Chrome sync storage
+ * Storage utility functions
+ *
+ * Runtime connection state is stored in chrome.storage.local so each
+ * extension instance is isolated. Shared preferences (e.g. bypass list)
+ * remain in chrome.storage.sync.
  */
 
-// Helper function for safer storage operations
-export async function safeSyncStorage(operation, data = null, defaultValue = null) {
+async function safeStorage(area, operation, data = null, defaultValue = null) {
   try {
     return await new Promise((resolve, reject) => {
       if (operation === 'get' && data) {
-        chrome.storage.sync.get(data, (result) => {
+        area.get(data, (result) => {
           if (chrome.runtime.lastError) {
-            console.error(`Error getting ${JSON.stringify(data)} from sync storage:`, chrome.runtime.lastError);
+            console.error(`Error getting ${JSON.stringify(data)} from storage:`, chrome.runtime.lastError);
             reject(chrome.runtime.lastError);
           } else {
             resolve(result);
           }
         });
       } else if (operation === 'set' && data) {
-        chrome.storage.sync.set(data, () => {
+        area.set(data, () => {
           if (chrome.runtime.lastError) {
-            console.error(`Error saving to sync storage:`, chrome.runtime.lastError);
+            console.error('Error saving to storage:', chrome.runtime.lastError);
             reject(chrome.runtime.lastError);
           } else {
             resolve(true);
@@ -32,6 +35,14 @@ export async function safeSyncStorage(operation, data = null, defaultValue = nul
     console.warn(`Storage operation failed (${operation}):`, error);
     return defaultValue;
   }
+}
+
+export async function safeSyncStorage(operation, data = null, defaultValue = null) {
+  return safeStorage(chrome.storage.sync, operation, data, defaultValue);
+}
+
+export async function safeLocalStorage(operation, data = null, defaultValue = null) {
+  return safeStorage(chrome.storage.local, operation, data, defaultValue);
 }
 
 export async function getStoredBypassList() {
@@ -48,26 +59,84 @@ export async function getStoredBypassList() {
   return [...new Set(list)];
 }
 
-export async function saveProxyStatus(status, upstream = null, siteSpecific = false, domain = null) {
-  const data = { 
-    currentProxyStatus: status, 
+/**
+ * Save this extension instance's connection status.
+ * Uses local storage so disconnect/connect does not affect other instances
+ * that share the same Google account sync.
+ */
+export async function saveProxyStatus(
+  status,
+  upstream = null,
+  siteSpecific = false,
+  domain = null,
+  localProxyAddress = null
+) {
+  const data = {
+    currentProxyStatus: status,
     currentUpstream: upstream,
     siteSpecificMode: siteSpecific,
-    siteSpecificDomain: domain
+    siteSpecificDomain: domain,
+    localProxyAddress: localProxyAddress,
   };
-  return await safeSyncStorage('set', data, null);
+  return await safeLocalStorage('set', data, null);
 }
 
 export async function getProxyStatus() {
-  return await safeSyncStorage(
+  // Prefer local (instance-isolated) state; fall back to sync once for migration.
+  const local = await safeLocalStorage(
     'get',
-    ['currentProxyStatus', 'currentUpstream', 'siteSpecificMode', 'siteSpecificDomain', 'bypassList'],
-    { 
-      currentProxyStatus: 'disconnected', 
+    [
+      'currentProxyStatus',
+      'currentUpstream',
+      'siteSpecificMode',
+      'siteSpecificDomain',
+      'localProxyAddress',
+    ],
+    null
+  );
+
+  if (local && local.currentProxyStatus) {
+    const bypass = await getStoredBypassList();
+    return {
+      currentProxyStatus: local.currentProxyStatus,
+      currentUpstream: local.currentUpstream || null,
+      siteSpecificMode: !!local.siteSpecificMode,
+      siteSpecificDomain: local.siteSpecificDomain || null,
+      localProxyAddress: local.localProxyAddress || null,
+      bypassList: bypass,
+    };
+  }
+
+  const synced = await safeSyncStorage(
+    'get',
+    [
+      'currentProxyStatus',
+      'currentUpstream',
+      'siteSpecificMode',
+      'siteSpecificDomain',
+      'bypassList',
+      'localProxyAddress',
+    ],
+    {
+      currentProxyStatus: 'disconnected',
       currentUpstream: null,
       siteSpecificMode: false,
       siteSpecificDomain: null,
-      bypassList: []
+      bypassList: [],
+      localProxyAddress: null,
     }
   );
-} 
+
+  // Migrate runtime connection fields into local storage
+  if (synced.currentProxyStatus && synced.currentProxyStatus !== 'disconnected') {
+    await saveProxyStatus(
+      synced.currentProxyStatus,
+      synced.currentUpstream,
+      synced.siteSpecificMode,
+      synced.siteSpecificDomain,
+      synced.localProxyAddress
+    );
+  }
+
+  return synced;
+}

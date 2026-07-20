@@ -3,25 +3,47 @@
  */
 
 import { getProxyStatus, saveProxyStatus } from '../utils/storage.js';
-import { getNodeAppStatus } from '../utils/nodeApi.js';
-import { setChromeProxy, clearChromeProxy, LOCAL_PROXY_ADDRESS } from '../utils/proxyManager.js';
+import { getNodeAppStatus, configureNodeAppProxy } from '../utils/nodeApi.js';
+import { setChromeProxy, setSiteSpecificProxy, clearChromeProxy } from '../utils/proxyManager.js';
+import { getInstanceId } from '../utils/instanceId.js';
 
 export async function handleStartup() {
-  console.log("Extension started up.");
+  console.log('Extension started up.');
   try {
+    const instanceId = await getInstanceId();
+    console.log('Extension instance ID:', instanceId);
+
     const data = await getProxyStatus();
     
     if (data.currentProxyStatus === 'connected' && data.currentUpstream) {
-      console.log('Attempting to restore proxy connection on startup.');
-      // Potentially re-verify Node app and Chrome proxy settings
-      // Re-apply Chrome proxy settings to ensure bypass list is current if it changed while extension was off
-      await setChromeProxy(LOCAL_PROXY_ADDRESS); // This will use the latest bypass list
-      // Set badge if was connected (already done by setChromeProxy)
+      console.log('Attempting to restore proxy connection on startup for this instance.');
+
+      // Re-create this instance's Node session. Port may change after Node restart.
+      const configResult = await configureNodeAppProxy(data.currentUpstream);
+      if (!configResult.success || !configResult.listeningAddress) {
+        console.warn('Failed to restore Node session on startup:', configResult.message);
+        await clearChromeProxy();
+        await saveProxyStatus('disconnected', null, false, null, null);
+        return;
+      }
+
+      if (data.siteSpecificMode && data.siteSpecificDomain) {
+        await setSiteSpecificProxy(data.siteSpecificDomain, configResult.listeningAddress);
+      } else {
+        await setChromeProxy(configResult.listeningAddress);
+      }
+
+      await saveProxyStatus(
+        'connected',
+        data.currentUpstream,
+        !!data.siteSpecificMode,
+        data.siteSpecificDomain || null,
+        configResult.listeningAddress
+      );
     } else {
       // Ensure proxy is cleared if not supposed to be connected
-      clearChromeProxy(); 
-      await saveProxyStatus('disconnected', null, false, null);
-      // Badge clearing is handled by clearChromeProxy
+      clearChromeProxy();
+      await saveProxyStatus('disconnected', null, false, null, null);
     }
   } catch (error) {
     console.error('Error during startup processing:', error);
@@ -32,19 +54,15 @@ export async function handleStartup() {
 
 export async function handleNodeAppStatusCheck() {
   const status = await getNodeAppStatus();
-  // console.log('Periodic Node.js App Status:', status);
-  // Optionally update UI or take action based on status
-  // This is tricky to communicate back to popup if not open.
-  // Notifications could be used for critical status changes.
   if (!status.success || !status.running) {
-    // If node app is not running but chrome is configured to use it, show notification
-    chrome.storage.sync.get(['currentProxyStatus'], (data) => {
+    // Use local instance status, not synced status
+    chrome.storage.local.get(['currentProxyStatus'], (data) => {
       if (data.currentProxyStatus === 'connected') {
         chrome.notifications.create('nodeAppDown', {
           type: 'basic',
           iconUrl: 'images/icon128.png',
           title: 'Proxy Manager Alert',
-          message: 'The Node.js proxy helper app appears to be down. Proxying may not work.'
+          message: 'The Node.js proxy helper app appears to be down for this extension instance. Proxying may not work.'
         });
       }
     });
@@ -52,8 +70,14 @@ export async function handleNodeAppStatusCheck() {
 }
 
 export function setupStartupHandlers() {
-  // Initial State & Alarms (Example for periodic status check)
+  // Ensure instance ID exists as soon as the service worker boots
+  getInstanceId().then((instanceId) => {
+    console.log('Proxy Manager instance ready:', instanceId);
+  });
+
+  // Initial State & Alarms
   chrome.runtime.onStartup.addListener(handleStartup);
+  chrome.runtime.onInstalled.addListener(handleStartup);
 
   chrome.alarms.create('checkNodeAppStatus', { periodInMinutes: 1 });
 
@@ -62,4 +86,4 @@ export function setupStartupHandlers() {
       await handleNodeAppStatusCheck();
     }
   });
-} 
+}

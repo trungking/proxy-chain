@@ -100,32 +100,48 @@ To configure domains that should bypass the proxy:
 2. Add domain patterns to bypass, one per line (e.g., `*.example.com`, `domain.net`)
 3. The settings will be saved automatically
 
+## Multi-instance Isolation
+
+Each Chrome extension install gets a random `instanceId` (stored in `chrome.storage.local`).
+
+- Connect/disconnect only affects **that** extension instance's Node.js session
+- Each instance gets its own free local proxy port (auto-assigned)
+- Connection status is stored in **local** storage (not sync), so one browser profile cannot overwrite another
+
 ## API Documentation
 
 ### Node.js Proxy Server API
 
-The Node.js server provides a control API on `http://127.0.0.1:9998` with the following endpoints:
+The Node.js server provides a control API on `http://127.0.0.1:9998` with the following endpoints.
+
+All mutating endpoints require `instanceId` so multiple extension instances can share one control server safely.
 
 #### GET /status
 
-Returns the current status of the proxy server.
+Without `instanceId`, returns aggregate status of all active sessions.
 
-**Response:**
+With `?instanceId=...`, returns that instance's session only.
+
+**Response (instance-scoped):**
 ```json
 {
+  "success": true,
+  "instanceId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "running": true,
-  "listeningAddress": "127.0.0.1:9999",
-  "upstreamProxyUrl": "socks5://user:pass@host:port"
+  "listeningAddress": "127.0.0.1:54321",
+  "upstreamProxyUrl": "socks5://user:pass@host:port",
+  "activeSessions": 2
 }
 ```
 
 #### POST /config
 
-Configures the proxy server to use a specific upstream proxy.
+Starts/restarts the proxy session for one extension instance.
 
 **Request Body:**
 ```json
 {
+  "instanceId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "upstreamProxyUrl": "socks5://user:pass@host:port"
 }
 ```
@@ -135,19 +151,29 @@ Configures the proxy server to use a specific upstream proxy.
 {
   "success": true,
   "message": "Proxy configured.",
+  "instanceId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "listeningAddress": "127.0.0.1:54321",
   "upstreamProxyUrl": "socks5://user:pass@host:port"
 }
 ```
 
 #### POST /stop
 
-Stops the proxy server.
+Stops **only** the proxy session for the given `instanceId`. Other instances keep running.
+
+**Request Body:**
+```json
+{
+  "instanceId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Proxy server stopped."
+  "message": "Proxy session stopped.",
+  "instanceId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
@@ -155,10 +181,11 @@ Stops the proxy server.
 
 The extension uses Chrome's storage API to save:
 
-- Proxy configurations
-- Bypass lists
-- Connection status
-- Site-specific proxy settings
+- Proxy configurations (sync or local, based on sync toggle)
+- Bypass lists (sync)
+- Per-instance connection status (local)
+- Per-instance random ID + local proxy address (local)
+- Site-specific proxy settings (local)
 
 ## Configuration
 
@@ -166,12 +193,15 @@ The extension uses Chrome's storage API to save:
 
 The following environment variables can be set before starting the server:
 
-- `LOCAL_PROXY_PORT`: Port for the HTTP proxy server (default: 9999)
 - `CONTROL_PORT`: Port for the control API (default: 9998)
+- `CONTROL_HOST`: Host for the control API (default: 127.0.0.1)
+- `LOCAL_PROXY_HOST`: Host for per-instance HTTP proxy relays (default: 127.0.0.1)
+
+Local relay ports are auto-assigned per instance (OS free ports).
 
 Example:
 ```bash
-LOCAL_PROXY_PORT=8080 CONTROL_PORT=8081 npm start
+CONTROL_PORT=9998 npm start
 ```
 
 ## Architecture

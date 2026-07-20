@@ -2,14 +2,19 @@
  * Chrome Proxy Settings Management
  */
 
-import { getStoredBypassList } from './storage.js';
+import { getStoredBypassList, getProxyStatus } from './storage.js';
 import { formatBypassListForChrome } from './bypassList.js';
 
-export const LOCAL_PROXY_ADDRESS = '127.0.0.1:9999';
+// Legacy default used only as a display fallback for older installs.
+export const DEFAULT_LOCAL_PROXY_ADDRESS = '127.0.0.1:9999';
 
 export async function setChromeProxy(proxyUrl) {
+  if (!proxyUrl) {
+    throw new Error('Local proxy address is required.');
+  }
+
   const userBypassList = await getStoredBypassList();
-  console.log("Using bypass list:", userBypassList);
+  console.log('Using bypass list:', userBypassList);
 
   // Parse the proxy URL
   const [host, portStr] = proxyUrl.split(':');
@@ -17,25 +22,24 @@ export async function setChromeProxy(proxyUrl) {
 
   if (!host || isNaN(port)) {
     console.error(`Invalid proxy URL format: ${proxyUrl}`);
-    return;
+    throw new Error(`Invalid proxy URL format: ${proxyUrl}`);
   }
 
   const formattedBypassList = formatBypassListForChrome(userBypassList);
-  console.log("Formatted bypass list for Chrome:", formattedBypassList);
+  console.log('Formatted bypass list for Chrome:', formattedBypassList);
 
-  // No need to expand the bypass list anymore since we're using wildcards
   const config = {
-    mode: "fixed_servers",
+    mode: 'fixed_servers',
     rules: {
       singleProxy: {
-        scheme: "http", // The local proxy server is HTTP
+        scheme: 'http', // The local proxy server is HTTP
         host: host,
         port: port,
       },
       bypassList: formattedBypassList
     }
   };
-  
+
   try {
     await new Promise((resolve, reject) => {
       chrome.proxy.settings.set({ value: config, scope: 'regular' }, () => {
@@ -55,6 +59,10 @@ export async function setChromeProxy(proxyUrl) {
 }
 
 export async function setSiteSpecificProxy(targetDomain, proxyAddress) {
+  if (!proxyAddress) {
+    throw new Error('Local proxy address is required for site-specific mode.');
+  }
+
   const pacScript = `function FindProxyForURL(url, host) {
     // Convert hostname to lowercase
     host = host.toLowerCase();
@@ -70,17 +78,16 @@ export async function setSiteSpecificProxy(targetDomain, proxyAddress) {
     // For all other hosts, use direct connection
     return "DIRECT";
   }`;
-  
-  console.log("Using PAC script for site-specific proxy:", pacScript);
-  
-  // Use PAC script configuration
+
+  console.log('Using PAC script for site-specific proxy:', pacScript);
+
   const config = {
-    mode: "pac_script",
+    mode: 'pac_script',
     pacScript: {
       data: pacScript
     }
   };
-  
+
   await new Promise((resolve, reject) => {
     chrome.proxy.settings.set({ value: config, scope: 'regular' }, () => {
       if (chrome.runtime.lastError) {
@@ -113,7 +120,10 @@ export async function clearChromeProxy() {
   }
 }
 
-export function getChromeProxyStatus() {
+export async function getChromeProxyStatus() {
+  const stored = await getProxyStatus();
+  const expectedAddress = stored.localProxyAddress || DEFAULT_LOCAL_PROXY_ADDRESS;
+
   return new Promise((resolve) => {
     chrome.proxy.settings.get({incognito: false}, (config) => {
       if (chrome.runtime.lastError) {
@@ -121,15 +131,24 @@ export function getChromeProxyStatus() {
         return;
       }
       let statusText = 'System Settings';
-      if (config.value.mode === 'fixed_servers' && 
-          config.value.rules && 
+      if (config.value.mode === 'fixed_servers' &&
+          config.value.rules &&
           config.value.rules.singleProxy &&
-          `${config.value.rules.singleProxy.host}:${config.value.rules.singleProxy.port}` === LOCAL_PROXY_ADDRESS) {
-          statusText = `Active (${LOCAL_PROXY_ADDRESS})`;
+          `${config.value.rules.singleProxy.host}:${config.value.rules.singleProxy.port}` === expectedAddress) {
+          statusText = `Active (${expectedAddress})`;
+      } else if (config.value.mode === 'pac_script' && stored.siteSpecificMode) {
+          statusText = stored.siteSpecificDomain
+            ? `Site-specific (${stored.siteSpecificDomain})`
+            : 'Site-specific';
       } else if (config.value.mode !== 'system') {
           statusText = `Other (${config.value.mode})`;
       }
-      resolve({ status: 'success', proxyStatus: statusText, config: config.value });
+      resolve({
+        status: 'success',
+        proxyStatus: statusText,
+        config: config.value,
+        localProxyAddress: expectedAddress,
+      });
     });
   });
-} 
+}

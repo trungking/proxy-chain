@@ -1,6 +1,10 @@
 /**
  * Node.js App Communication utilities
+ * All control requests are scoped by extension instance ID so multiple
+ * extension instances can share one Node control server safely.
  */
+
+import { getInstanceId } from './instanceId.js';
 
 export const NODE_APP_CONTROL_URL_BASE = 'http://127.0.0.1:9998';
 
@@ -29,8 +33,9 @@ export async function sendCommandToNodeApp(endpoint, method = 'GET', body = null
 
 export async function getNodeAppStatus() {
   try {
-    const status = await sendCommandToNodeApp('/status');
-    return { success: true, ...status };
+    const instanceId = await getInstanceId();
+    const status = await sendCommandToNodeApp(`/status?instanceId=${encodeURIComponent(instanceId)}`);
+    return { success: true, instanceId, ...status };
   } catch (error) {
     return { success: false, running: false, message: error.message };
   }
@@ -38,18 +43,33 @@ export async function getNodeAppStatus() {
 
 export async function configureNodeAppProxy(upstreamProxyUrl) {
   try {
-    await sendCommandToNodeApp('/config', 'POST', { upstreamProxyUrl });
-    return { success: true };
+    const instanceId = await getInstanceId();
+    const result = await sendCommandToNodeApp('/config', 'POST', {
+      instanceId,
+      upstreamProxyUrl,
+    });
+    return {
+      success: true,
+      instanceId,
+      listeningAddress: result.listeningAddress,
+      upstreamProxyUrl: result.upstreamProxyUrl || upstreamProxyUrl,
+      message: result.message,
+    };
   } catch (error) {
     return { success: false, message: error.message };
   }
 }
 
+/**
+ * Stops only this extension instance's proxy session on the Node app.
+ * Other extension instances keep running.
+ */
 export async function stopNodeAppProxy() {
   try {
-    await sendCommandToNodeApp('/stop', 'POST');
-    return { success: true };
+    const instanceId = await getInstanceId();
+    await sendCommandToNodeApp('/stop', 'POST', { instanceId });
+    return { success: true, instanceId };
   } catch (error) {
     return { success: false, message: error.message };
   }
-} 
+}

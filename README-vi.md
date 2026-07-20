@@ -95,78 +95,68 @@ socks5://username:password@host:port
 2. Thêm các mẫu tên miền để bỏ qua, mỗi dòng một mẫu (ví dụ: `*.example.com`, `domain.net`)
 3. Cài đặt sẽ được lưu tự động
 
+## Cô lập nhiều instance
+
+Mỗi bản cài extension Chrome có một `instanceId` ngẫu nhiên (lưu trong `chrome.storage.local`).
+
+- Connect/disconnect chỉ ảnh hưởng session Node.js của **instance đó**
+- Mỗi instance có port proxy local riêng (tự gán)
+- Trạng thái kết nối lưu ở storage **local** (không sync), nên profile này không ghi đè profile khác
+
 ## Tài liệu API
 
 ### API Máy chủ Proxy Node.js
 
-Máy chủ Node.js cung cấp API điều khiển trên `http://127.0.0.1:9998` với các endpoint sau:
+Máy chủ Node.js cung cấp API điều khiển trên `http://127.0.0.1:9998`.
+
+Các endpoint thay đổi trạng thái đều yêu cầu `instanceId` để nhiều extension instance dùng chung 1 control server an toàn.
 
 #### GET /status
 
-Trả về trạng thái hiện tại của máy chủ proxy.
-
-**Phản hồi:**
-```json
-{
-  "running": true,
-  "listeningAddress": "127.0.0.1:9999",
-  "upstreamProxyUrl": "socks5://user:pass@host:port"
-}
-```
+Không có `instanceId`: trả về tổng hợp tất cả session.
+Có `?instanceId=...`: trả về session của instance đó.
 
 #### POST /config
 
-Cấu hình máy chủ proxy để sử dụng proxy upstream cụ thể.
-
-**Nội dung Yêu cầu:**
+Body:
 ```json
 {
-  "upstreamProxyUrl": "socks5://user:pass@host:port"
-}
-```
-
-**Phản hồi:**
-```json
-{
-  "success": true,
-  "message": "Proxy configured.",
+  "instanceId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "upstreamProxyUrl": "socks5://user:pass@host:port"
 }
 ```
 
 #### POST /stop
 
-Dừng máy chủ proxy.
+Chỉ dừng session của `instanceId` được chỉ định. Các instance khác vẫn chạy.
 
-**Phản hồi:**
+Body:
 ```json
 {
-  "success": true,
-  "message": "Proxy server stopped."
+  "instanceId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
 ### Lưu trữ Tiện ích mở rộng Chrome
 
-Tiện ích mở rộng sử dụng API lưu trữ của Chrome để lưu:
-
-- Cấu hình proxy
-- Danh sách bỏ qua
-- Trạng thái kết nối
-- Cài đặt proxy theo trang web
+- Cấu hình proxy (sync hoặc local theo toggle)
+- Bypass list (sync)
+- Trạng thái kết nối theo instance (local)
+- ID ngẫu nhiên + local proxy address theo instance (local)
 
 ## Cấu hình
 
 ### Cấu hình Máy chủ Node.js
 
-Các biến môi trường sau có thể được đặt trước khi khởi động máy chủ:
+- `CONTROL_PORT`: Port API điều khiển (mặc định: 9998)
+- `CONTROL_HOST`: Host API điều khiển (mặc định: 127.0.0.1)
+- `LOCAL_PROXY_HOST`: Host cho relay HTTP từng instance (mặc định: 127.0.0.1)
 
-- `LOCAL_PROXY_PORT`: Port cho máy chủ proxy HTTP (mặc định: 9999)
-- `CONTROL_PORT`: Port cho API điều khiển (mặc định: 9998)
+Port relay local được gán tự động cho từng instance.
 
 Ví dụ:
 ```bash
-LOCAL_PROXY_PORT=8080 CONTROL_PORT=8081 npm start
+CONTROL_PORT=9998 npm start
 ```
 
 ## Kiến trúc
