@@ -8,6 +8,13 @@ import { getInstanceId } from './instanceId.js';
 
 export const NODE_APP_CONTROL_URL_BASE = 'http://127.0.0.1:9998';
 
+function assertInstanceId(instanceId) {
+  if (typeof instanceId !== 'string' || !instanceId.trim()) {
+    throw new Error('Extension instanceId is missing or invalid.');
+  }
+  return instanceId.trim();
+}
+
 export async function sendCommandToNodeApp(endpoint, method = 'GET', body = null) {
   try {
     const response = await fetch(`${NODE_APP_CONTROL_URL_BASE}${endpoint}`,
@@ -16,13 +23,18 @@ export async function sendCommandToNodeApp(endpoint, method = 'GET', body = null
         headers: {
           'Content-Type': 'application/json',
         },
-        body: body ? JSON.stringify(body) : null,
+        body: body == null ? undefined : JSON.stringify(body),
       }
     );
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ message: response.statusText }));
-      console.error(`Error from Node.js app (${endpoint}): ${response.status}`, errorData);
-      throw new Error(`Node.js app error: ${errorData.message || response.statusText}`);
+      const errorMessage = errorData?.message || response.statusText || 'Unknown error';
+      console.error(
+        `Error from Node.js app (${endpoint}): ${response.status}`,
+        errorMessage,
+        errorData
+      );
+      throw new Error(`Node.js app error: ${errorMessage}`);
     }
     return await response.json();
   } catch (error) {
@@ -33,8 +45,10 @@ export async function sendCommandToNodeApp(endpoint, method = 'GET', body = null
 
 export async function getNodeAppStatus() {
   try {
-    const instanceId = await getInstanceId();
-    const status = await sendCommandToNodeApp(`/status?instanceId=${encodeURIComponent(instanceId)}`);
+    const instanceId = assertInstanceId(await getInstanceId());
+    const status = await sendCommandToNodeApp(
+      `/status?instanceId=${encodeURIComponent(instanceId)}`
+    );
     return { success: true, instanceId, ...status };
   } catch (error) {
     return { success: false, running: false, message: error.message };
@@ -43,11 +57,25 @@ export async function getNodeAppStatus() {
 
 export async function configureNodeAppProxy(upstreamProxyUrl) {
   try {
-    const instanceId = await getInstanceId();
-    const result = await sendCommandToNodeApp('/config', 'POST', {
-      instanceId,
-      upstreamProxyUrl,
-    });
+    const instanceId = assertInstanceId(await getInstanceId());
+    // Send instanceId in both query and body so it cannot be dropped by body parsing edge cases.
+    const result = await sendCommandToNodeApp(
+      `/config?instanceId=${encodeURIComponent(instanceId)}`,
+      'POST',
+      {
+        instanceId,
+        upstreamProxyUrl,
+      }
+    );
+
+    if (!result?.listeningAddress) {
+      return {
+        success: false,
+        message: result?.message || 'Node.js app did not return a listening address.',
+        instanceId,
+      };
+    }
+
     return {
       success: true,
       instanceId,
@@ -66,8 +94,12 @@ export async function configureNodeAppProxy(upstreamProxyUrl) {
  */
 export async function stopNodeAppProxy() {
   try {
-    const instanceId = await getInstanceId();
-    await sendCommandToNodeApp('/stop', 'POST', { instanceId });
+    const instanceId = assertInstanceId(await getInstanceId());
+    await sendCommandToNodeApp(
+      `/stop?instanceId=${encodeURIComponent(instanceId)}`,
+      'POST',
+      { instanceId }
+    );
     return { success: true, instanceId };
   } catch (error) {
     return { success: false, message: error.message };

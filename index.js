@@ -130,14 +130,21 @@ function parseRequestBody(body) {
   return JSON.parse(body);
 }
 
+function normalizeInstanceId(value) {
+  if (value == null) return null;
+  const id = String(value).trim();
+  return id.length > 0 ? id : null;
+}
+
 function getInstanceIdFromRequest(req, bodyObj) {
-  if (bodyObj && bodyObj.instanceId) {
-    return String(bodyObj.instanceId);
+  const fromBody = normalizeInstanceId(bodyObj && bodyObj.instanceId);
+  if (fromBody) {
+    return fromBody;
   }
 
   try {
     const requestUrl = new URL(req.url, `http://${controlHost}:${controlPort}`);
-    return requestUrl.searchParams.get('instanceId');
+    return normalizeInstanceId(requestUrl.searchParams.get('instanceId'));
   } catch (error) {
     return null;
   }
@@ -179,7 +186,12 @@ const controlServer = http.createServer((req, res) => {
         const newUpstreamUrl = payload.upstreamProxyUrl;
 
         if (!instanceId) {
-          sendJson(res, 400, { success: false, message: 'instanceId is required.' });
+          console.warn('Missing instanceId on /config. rawBody=', body, 'payload=', payload);
+          sendJson(res, 400, {
+            success: false,
+            message: 'instanceId is required.',
+            receivedKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+          });
           return;
         }
 
@@ -303,3 +315,4 @@ function shutdownAll() {
 
 process.on('SIGINT', shutdownAll);
 process.on('SIGTERM', shutdownAll);
+

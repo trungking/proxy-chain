@@ -18,18 +18,30 @@ function generateInstanceId() {
   return `ext-${timePart}-${randomPart}`;
 }
 
+function isValidInstanceId(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 /**
  * Returns the stable random ID for this extension instance.
  * Creates and persists one on first use.
+ * Always returns a non-empty string.
  */
 export async function getInstanceId() {
   try {
-    const result = await chrome.storage.local.get([INSTANCE_ID_KEY]);
-    if (result[INSTANCE_ID_KEY]) {
-      return result[INSTANCE_ID_KEY];
+    const result = await chrome.storage.local.get(INSTANCE_ID_KEY);
+    const existing = result?.[INSTANCE_ID_KEY];
+
+    if (isValidInstanceId(existing)) {
+      return existing.trim();
     }
 
     const instanceId = generateInstanceId();
+    if (!isValidInstanceId(instanceId)) {
+      // Extremely defensive; should never happen
+      return `ext-fallback-${Date.now()}`;
+    }
+
     await chrome.storage.local.set({ [INSTANCE_ID_KEY]: instanceId });
     console.log('Generated new extension instance ID:', instanceId);
     return instanceId;
